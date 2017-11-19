@@ -1,7 +1,7 @@
-/* Animatronic Parrot v1
+/* Animatronic Parrot v2
    by Danny Pesses
 
-   Uses a WiiChuck to manipulate several servo motors
+   Uses a WiiChuck and a MSGEQ7 to manipulate several servo motors
    connected to a Pololu Micro Maestro 6-Channel USB Servo Controller
 */
 
@@ -15,7 +15,7 @@
 
   Be sure to click "Apply Settings" after making any changes.
 
-  This example also assumes you have connected your Arduino to your
+  This sketch also assumes you have connected your Arduino to your
   Maestro appropriately. If you have not done so, please see
   https://github.com/pololu/maestro-arduino for more details on how
   to make the connection between your Arduino and your Maestro. */
@@ -51,13 +51,19 @@ int strobePin = 2; // strobe is attached to digital pin 2
 int resetPin = 3; // reset is attached to digital pin 3
 int spectrumValue[7]; // to hold a2d values
 
-int minValue = 600;
-int maxValue = 1000;
+// Constraints for MSGEQ7's output values
+// NOTE: You WILL need to edit these values based on
+// the loudness of your audio source
+int minValue = 100;
+int maxValue = 300;
+
+int averageVal = 0; // average values across several spectrums
+int levelsVal = 0;  // stores audio level 0-10
+String levelsStr = "";
+String logVal = "";
+
 
 /* Setup WiiChuck vars */
-int loop_cnt = 0;
-int refresh_msec = 10; // msecs until new data processed from WiiChuck
-int lastUpdate = 0;
 byte joyx, joyy, cbut, zbut, accx, accy;
 bool wiichuckReady = false;
 
@@ -121,8 +127,16 @@ void setup()
 
   nunchuck_setpowerpins();
   nunchuck_init(); // send the initilization handshake
+
   Serial.begin(9600);
-  delay(refresh_msec);
+  
+  // Setup pins for MSGEQ7
+  pinMode(analogPin, INPUT);
+  pinMode(strobePin, OUTPUT);
+  pinMode(resetPin, OUTPUT);
+  analogReference(DEFAULT);
+  
+  delay(250);
 
   // clear out serial monitor and avoid
   // double-printing the first few lines
@@ -296,9 +310,75 @@ void loop() {
   }
 }
 
+/*
+  To read the current loudness of the frequencies from of the MSGEQ7, 
+  you must first reset the chip and then strobe the chip 7 times, 
+  once for each frequency. Each strobe returns a value between 0-1023
+  that corresponds to one of the 7 frequencies in the following order:
+  63Hz, 160Hz, 400Hz, 1kHz, 2.5kHz, 6.25kHz, 16kHz
+*/
+
 void updateSpectrum() {
 
-  
+  averageVal = 0;
+
+  for (int i = 0; i < 7; i++) {
+    digitalWrite(strobePin, LOW);
+    
+    spectrumValue[i] = analogRead(analogPin);
+    averageVal += spectrumValue[i];
+
+	// For specific frequency monitoring
+/*	
+    if (i == 3) { //3 = 1khz range
+
+      servo0_value = map(spectrumValue[i], minValue, maxValue, beak_closed, beak_opened);
+      servo0_value = constrain(servo0_value, beak_closed, beak_opened);
+	  servo0_value = to_pulse(servo0_value);
+      maestro.setTarget(0, servo0_value);
+      
+      // serial output
+      if (debug_serial == true) {
+        levelsVal = map(spectrumValue[i], minValue, maxValue, 0, 10);
+        levelsVal = constrain(levelsVal, 0, 10);
+      
+        levelsStr = "";
+        for (int j = 0; j < levelsVal; j++) {
+          levelsStr = levelsStr + "|";
+        }
+        for (int k = 0; k < 10 - levelsVal; k++) {
+          levelsStr = levelsStr + "_";
+        }
+        levelsStr = levelsStr + " ";
+
+        Serial.print(levelsStr); Serial.print(spectrumValue[i]);
+        Serial.print(" (");
+        Serial.print(servo0_value);
+        Serial.print(")");
+      }
+    } */
+    digitalWrite(strobePin, HIGH);
+  }
+
+  // get the average of spectrum output
+  averageVal = round(averageVal/7);
+
+  // map (and constrain) average value to beak position
+  servo0_value = map(averageVal, minValue, maxValue, beak_closed, beak_opened);
+  servo0_value = constrain(servo0_value, beak_closed, beak_opened);
+  servo0_value = to_pulse(servo0_value);
+  maestro.setTarget(0, servo0_value);
+
+  if (debug_serial == true) {
+    Serial.print("servo0_value: ");
+    Serial.print(to_pulse(servo0_value));
+    Serial.print(", averageVal: ");
+    Serial.println(averageVal);
+  }
+
+  // trigger MSGEQ7 to process audio for next loop
+  digitalWrite(resetPin, HIGH);
+  digitalWrite(resetPin, LOW);
 }
 
 // Run at the beginning of loop to detect the current state
@@ -310,18 +390,15 @@ void onLoopStart() {
     if (wiichuckReady == false && (joyx != 255 || joyy != 255)) {
       wiichuckReady = true;
       Serial.println("- WiiChuck ready");
-      // allow setting a debug option from a held button;
-      // only checked during startup routine
-      Serial.print("- joyx: ");
-      Serial.print(joyx);
-      Serial.print(", joyy: ");
-      Serial.print(joyy);
-      Serial.print(", zbut: ");
-//      Serial.print("- zbut: ");
-      Serial.println(zbut);
+      // allow setting any debug option(s) from held button(s);
+      // will be only checked during startup routine
       if (zbut == 1) {
         debug_serial = true;
         Serial.println("- Serial output enabled!");
+      }
+      if (cbut == 1) {
+        // set something here
+        // Serial.println("- Something else enabled!");
       }
     }
 
@@ -351,8 +428,8 @@ void onLoopStart() {
     }
 
 }
-
-void readWiichuckInput() {
+/*
+void readWiichuckInput() {	// original loop
   
   if (loop_cnt > wiichuckUpdateInterval) { // get new data when loop_cnt exceeds refresh_msecs
     loop_cnt = 0;
@@ -404,9 +481,9 @@ void readWiichuckInput() {
     }
 
     // debug Nunchuck values
-    /*if (debug_serial==true) {
-      debugNunchuckValues();
-      }*/
+    // if (debug_serial==true) {
+    //   debugNunchuckValues();
+    // }
 
     if (autopilot_enabled == false) {
 
@@ -457,7 +534,7 @@ void readWiichuckInput() {
 
   delay(1);
 
-}
+}*/
 
 void mapWiichuckValues() {
   
@@ -503,7 +580,7 @@ void writeMaestroSerial() {
       RC hobby servo responds to pulses between 1 ms (4000) and 2
       ms (8000). */
   
-    maestro.setTarget(0, servo0_value);
+//    maestro.setTarget(0, servo0_value);
     maestro.setTarget(1, servo1_value);
     maestro.setTarget(2, servo2_value);
     maestro.setTarget(3, servo3_value);
@@ -511,5 +588,4 @@ void writeMaestroSerial() {
     maestro.setTarget(5, servo5_value);
 
 }
-
 
