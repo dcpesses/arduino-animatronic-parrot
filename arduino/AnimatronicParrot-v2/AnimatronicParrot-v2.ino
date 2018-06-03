@@ -55,7 +55,7 @@ int spectrumValue[7]; // to hold a2d values
 // NOTE: You WILL need to edit these values based on
 // the loudness of your audio source
 int minValue = 100;
-int maxValue = 300;
+int maxValue = 500;
 
 int averageVal = 0; // average values across several spectrums
 int levelsVal = 0;  // stores audio level 0-10
@@ -66,6 +66,7 @@ String logVal = "";
 /* Setup WiiChuck vars */
 byte joyx, joyy, cbut, zbut, accx, accy;
 bool wiichuckReady = false;
+bool wiichuckDisconnected = false;
 
 // Servo variables
 int beak, head_pan, head_tilt, body_tilt, wings;
@@ -247,6 +248,14 @@ void updateNunchuckValues() {
   accy = nunchuck_accely(); // ranges from approx 65 - 173
   zbut = nunchuck_zbutton();
   cbut = nunchuck_cbutton();
+
+  if ((joyx == 0 || joyy == 0) && wiichuckDisconnected == false) {
+    wiichuckDisconnected = true;
+    (debug_serial == true) && Serial.println("*** NUNCHUCK NOT DETECTED ***");
+  } else if ((joyx != 0 || joyy != 0) && wiichuckDisconnected == true) {
+    wiichuckDisconnected = false;
+    (debug_serial == true) && Serial.println("*** NUNCHUCK DETECTED ***");
+  }
 }
 
 
@@ -387,7 +396,7 @@ void updateSpectrum() {
 void onLoopStart() {
     
     // check if wiichuck is reporting valid data
-    if (wiichuckReady == false && (joyx != 255 || joyy != 255)) {
+    if (wiichuckReady == false && (joyx != 255 || joyy != 255) && wiichuckDisconnected == false) {
       wiichuckReady = true;
       Serial.println("- WiiChuck ready");
       // allow setting any debug option(s) from held button(s);
@@ -403,16 +412,15 @@ void onLoopStart() {
     }
 
     // use autopilot if nunchuck is disconnected
-    if (joyx == 0 && joyy == 0) {
+    if (joyx == 0 && joyy == 0 && autopilot_enabled == false && wiichuckDisconnected == true) {
       autopilot_enabled = true;
-      (debug_serial == true) && Serial.print("*** NUNCHUCK NOT DETECTED ***");
       zbut = 0;
       cbut = 0;
       enableAutoPilot();
     }
 
     // if joystick is NOT in center position or any buttons are pressed
-    else if (abs(joyx - 124) > 2 || abs(joyy - 134) > 2 || cbut == 1 || zbut == 1) {
+    else if (wiichuckDisconnected == false && joyx != 0 && joyy != 0 && (abs(joyx - 124) > 2 || abs(joyy - 134) > 2 || cbut == 1 || zbut == 1)) {
       // disable autopilot if manual control used
       if (autopilot_enabled == true) {
         disableAutoPilot();
